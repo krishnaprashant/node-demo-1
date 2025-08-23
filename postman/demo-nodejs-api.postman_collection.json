@@ -1,0 +1,67 @@
+{
+  "info": {
+    "_postman_id": "demo-nodejs-api-collection",
+    "name": "Demo Node.js API",
+    "description": "Postman collection for testing login, logout, registration, user listing, editing, and deleting endpoints.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Register User",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"testpass\"\n}"
+        },
+        "url": { "raw": "http://localhost:3000/register", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["register"] }
+      }
+    },
+    {
+      "name": "Login User",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"testpass\"\n}"
+        },
+        "url": { "raw": "http://localhost:3000/login", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["login"] }
+      }
+    },
+    {
+      "name": "Logout User",
+      "request": {
+        "method": "POST",
+        "url": { "raw": "http://localhost:3000/logout", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["logout"] }
+      }
+    },
+    {
+      "name": "List Users",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "http://localhost:3000/users", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["users"] }
+      }
+    },
+    {
+      "name": "Edit User",
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"newname\",\n  \"password\": \"newpass\"\n}"
+        },
+        "url": { "raw": "http://localhost:3000/users/:id", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["users", ":id"] }
+      }
+    },
+    {
+      "name": "Delete User",
+      "request": {
+        "method": "DELETE",
+        "url": { "raw": "http://localhost:3000/users/:id", "protocol": "http", "host": ["localhost"], "port": "3000", "path": ["users", ":id"] }
+      }
+    }
+  ]
+}
