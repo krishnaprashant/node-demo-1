@@ -43,14 +43,12 @@ const metricsMiddleware = (req, res, next) => {
       statusCode: res.statusCode,
     });
 
-    httpResponseTimeHistogram.observe(
-      {
-        method: req.method,
-        route: req.route ? req.route.path : req.path,
-        statusCode: res.statusCode,
-      },
-      responseTimeInSeconds
-    );
+    httpResponseTime.inc({
+      method: req.method,
+      route: req.route ? req.route.path : req.path,
+      statusCode: res.statusCode,
+      value: responseTimeInSeconds,
+    });
   });
   next();
 };
