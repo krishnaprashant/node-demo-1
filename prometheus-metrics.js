@@ -10,10 +10,11 @@ const httpRequestCounter = new client.Counter({
 });
 
 // Create a histogram for response times
-const httpResponseTimeHistogram = new client.Histogram({
-  name: "http_response_time_seconds",
+const httpResponseTime = new client.Histogram({
+  name: "http_response_time",
   help: "Response time in seconds",
   labelNames: ["method", "route", "statusCode"],
+  buckets: [0.1, 0.5, 1, 2, 5, 10]
 });
 
 const httpThroughputCounter = new client.Counter(
@@ -43,12 +44,11 @@ const metricsMiddleware = (req, res, next) => {
       statusCode: res.statusCode,
     });
 
-    httpResponseTime.inc({
+    httpResponseTime.observe({
       method: req.method,
       route: req.route ? req.route.path : req.path,
-      statusCode: res.statusCode,
-      value: responseTimeInSeconds,
-    });
+      statusCode: res.statusCode
+    }, responseTimeInSeconds);
   });
   next();
 };
