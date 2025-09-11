@@ -123,7 +123,6 @@ const metricsMiddleware = (req, res, next) => {
       statusCode: res.statusCode,
       device_type
     });
-
     // ✅ Corrected histogram usage
     httpResponseTimeHistogram
       .labels(req.method, req.route ? req.route.path : req.path, res.statusCode, device_type)

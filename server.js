@@ -1,46 +1,30 @@
-// Demonstrate thread pool usage
-const crypto = require('crypto');
-const prom = require('./prometheus-metrics');
+const api = require("@opentelemetry/api");
+const tracer = require("./tracing")("MyService");
+const fs = require("fs");
+const https = require("https");
 
+const express = require("express");
+const mongoose = require("mongoose");
+const session = require("express-session");
+const passport = require("passport");
+const LocalStrategy = require("passport-local").Strategy;
+const bcrypt = require("bcrypt");
+const User = require("./user");
 
-const express = require('express');
-const mongoose = require('mongoose');
-const session = require('express-session');
-const passport = require('passport');
-const LocalStrategy = require('passport-local').Strategy;
-const bcrypt = require('bcrypt');
-const uuid = require('uuid');
-const User = require('./user');
+const prom = require("./prometheus-metrics");
 
-const SUCCESS = 'success'
-const FAILED = 'failed'
 const client = prom.client;
 
 const app = express();
-
-
-app.get('/threadpool-demo', (req, res) => {
-  const tasks = 8; // More than default thread pool size (4)
-  let completed = 0;
-  prom.threadPoolUtilizationGauge.inc(tasks); // Increment gauge by number of tasks started
-  for (let i = 0; i < tasks; i++) {
-    crypto.pbkdf2('password', 'salt', 100000, 64, 'sha512', () => {
-      prom.threadPoolUtilizationGauge.dec(); // Decrement gauge when task completes
-      completed++;
-      if (completed === tasks) {
-        res.json({ message: `${tasks} pbkdf2 tasks completed` });
-      }
-    });
-  }
-});
-
-
-
 app.use(express.json());
-
+app.use(
+  session({ secret: "demo-secret", resave: false, saveUninitialized: false })
+);
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Use the middleware in your app (for Express)
-if (typeof app !== 'undefined' && app.use) {
+if (typeof app !== "undefined" && app.use) {
   app.use(prom.metricsMiddleware);
 }
 
@@ -68,61 +52,32 @@ mongoose.connect(
 "mongodb+srv://preetham:Preetham1750@pegabits.0b2jh8j.mongodb.net/myFirstDB?retryWrites=true&w=majority&appName=pegabits"
 );
 
+app.get("/", (req, res) => {
+  const currentSpan = api.trace.getActiveSpan();
+  // display traceid in the terminal
+  const traceId = currentSpan.spanContext().traceId;
+  console.log(`traceId: ${traceId}`);
+  const span = tracer.startSpan("Homepage", {
+    kind: 1, // server
+    attributes: { key: "value" },
+  });
+  // Annotate our span to capture metadata about the operation
 
-// Middleware to track session creation
-app.use(session({
-  secret: 'demo-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: { maxAge: 24 * 60 * 60 * 1000 }, // 24-hour max age
-  store: new (require('express-session').MemoryStore)(), // Optional: Use a persistent store
-  genid: (req) => {
-    prom.sessionCreatedTotal.inc({ status: 'success' });
-    return uuid.v4(); // Generate unique session ID
-  }
-}));
-app.use(passport.initialize());
-app.use(passport.session());
-
-
-// Add after session middleware
-app.use((req, res, next) => {
-  if (req.session && !req.session.createdAt && req.user) {
-    req.session.createdAt = Date.now();
-  }
-  next();
+  res.send("Hello Observability!");
+  span.end();
 });
 
-
 // Registration
-app.post('/register', async (req, res) => {
-  
+app.post("/register", async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
-  const start = process.hrtime();
-  const exists = await prom.traceDbQuery('findOne', 'users', () => User.findOne({ username }));
-  if (exists) return res.status(409).json({ error: 'User exists' });
+  if (!username || !password)
+    return res.status(400).json({ error: "Missing fields" });
+  const exists = await User.findOne({ username });
+  if (exists) return res.status(409).json({ error: "User exists" });
   const hash = await bcrypt.hash(password, 10);
   const user = new User({ username, password: hash });
-  await prom.traceDbQuery('save', 'users', () => user.save());
-  const diff = process.hrtime(start);
-
-  const duration = diff[0] + diff[1] / 1e9;
-  prom.dbQueryCounter.inc({
-    operation: "register",
-    collection: "users",
-    status: SUCCESS
-  });
-  prom.dbQueryDurationHistogram.observe({
-    operation: "register",
-    collection: "users",
-    status: SUCCESS
-  }, duration);
-
-  // incrementing for new user registrations
-  prom.userRegisteredCounter.inc({ method: req.method, source: "api" });
-
-  res.json({ message: 'User registered' });
+  await user.save();
+  res.json({ message: "User registered" });
 });
 
 
@@ -141,53 +96,47 @@ app.post('/register-exception', async (req, res) => {
 
 
 // Login
-app.post('/login', passport.authenticate('local'), (req, res) => {
-  prom.dbQueryCounter.inc({
-    operation:'login',
-    collection:'users',
-    status:SUCCESS
-  });
-  prom.activeUsersGauge.inc();
-  req.session.createdAt = Date.now(); // Ensure createdAt is set
-  res.json({ message: 'Logged in' });
+app.post("/login", (req, res, next) => {
+  passport.authenticate("local", (err, user, info) => {
+    const currentSpan = api.trace.getActiveSpan();
+    const traceId = currentSpan ? currentSpan.spanContext().traceId : "N/A";
+    const span = tracer.startSpan("Login", {
+      kind: 1, // server
+      attributes: { key: "value", traceId },
+    });
+
+    if (err) {
+      span.setAttribute("error", true);
+      span.setAttribute("error.message", err.message);
+      res.status(500).json({ error: "Server error" });
+      span.end();
+      return;
+    }
+    if (!user) {
+      span.setAttribute("error", true);
+      span.setAttribute("error.message", info ? info.message : "Unauthorized");
+      res.status(401).json({ error: info ? info.message : "Unauthorized" });
+      span.end();
+      return;
+    }
+    req.login(user, (err) => {
+      if (err) {
+        span.setAttribute("error", true);
+        span.setAttribute("error.message", err.message);
+        res.status(500).json({ error: "Login error" });
+        span.end();
+        return;
+      }
+      res.json({ message: "Logged in" });
+      span.end();
+    });
+  })(req, res, next);
 });
 
-// Logout endpoint
-app.post('/logout', (req, res) => {
-  if (req.session && req.session.createdAt) {
-    const duration = (Date.now() - req.session.createdAt) / 1000;
-    prom.sessionDurationHistogram.observe({ status: 'success' }, duration);
-  }
-  
-  // Track session deletion
-  prom.sessionDeletedTotal.inc({ status: 'success' });
-  
-  req.logout((err) => {
-    if (err) {
-      prom.dbQueryCounter.inc({
-        operation: 'logout',
-        collection: 'users',
-        status: FAILED
-      });
-      return res.status(500).json({ error: 'Logout failed', details: err.message });
-    }
-    
-    prom.dbQueryCounter.inc({
-      operation: 'logout',
-      collection: 'users',
-      status: SUCCESS
-    });
-    
-    // Safely decrement active users
-    prom.activeUsersGauge.dec();
-    
-    // Destroy the session
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Session destruction failed' });
-      }
-      res.json({ message: 'Logged out successfully' });
-    });
+// Logout
+app.post("/logout", (req, res) => {
+  req.logout(() => {
+    res.json({ message: "Logged out" });
   });
 });
 
@@ -221,25 +170,71 @@ app.use((err, req, res, next) => {
 //response time 
 
 // Edit user
-app.put('/users/:id', async (req, res) => {
-try {
+app.put("/users/:id", async (req, res) => {
+  try {
     const { username, password } = req.body;
     const update = {};
     if (username) update.username = username;
     if (password) update.password = await bcrypt.hash(password, 10);
   const user = await prom.traceDbQuery('findByIdAndUpdate', 'users', () => User.findByIdAndUpdate(req.params.id, update, { new: true }));
     // if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ message: 'User updated', user });
-} catch (err) {
-    res.status(500).json({ error: 'Server error', details: err.message });
-}
+    res.json({ message: "User updated", user });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+// add method that returns a dummy response but with random delay between 1-5 seconds but also include the delay in reponse
+app.get("/dummy", async (req, res) => {
+  const delay = Math.floor(Math.random() * 5000) + 1000; // Random delay between 1-5 seconds
+  await new Promise((resolve) => setTimeout(resolve, delay));
+  res.json({ message: "Dummy response", delay });
 });
 
 // Delete user
-app.delete('/users/:id', async (req, res) => {
-  const user = await prom.traceDbQuery('findByIdAndDelete', 'users', () => User.findByIdAndDelete(req.params.id));
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ message: 'User deleted' });
+app.delete("/users/:id", async (req, res) => {
+  const user = await User.findByIdAndDelete(req.params.id);
+  if (!user) return res.status(404).json({ error: "User not found" });
+  res.json({ message: "User deleted" });
+});
+
+function logTraceIdAndName(name) {
+  const currentSpan = api.trace.getActiveSpan();
+  if (currentSpan) {
+    const traceId = currentSpan.spanContext().traceId;
+    console.log(`traceId: ${traceId}, method: ${name}`);
+  }
+}
+
+function capitalizeText(text) {
+  const parentSpan = api.trace.getActiveSpan();
+  const ctx = parentSpan ? api.trace.setSpan(api.context.active(), parentSpan) : api.context.active();
+  const span = tracer.startSpan("capitalizeText", undefined, ctx);
+  const start = Date.now();
+  while (Date.now() - start < 2000);
+  const result = text.charAt(0).toUpperCase() + text.slice(1);
+  span.end();
+  return result;
+}
+
+function getName(name) {
+  const parentSpan = api.trace.getActiveSpan();
+  const ctx = parentSpan ? api.trace.setSpan(api.context.active(), parentSpan) : api.context.active();
+  const span = tracer.startSpan("getName", undefined, ctx);
+  const start = Date.now();
+  while (Date.now() - start < 3000);
+  const capitalized = capitalizeText(name);
+  span.end();
+  return capitalized;
+}
+
+app.get("/distributed-tracing-example", (req, res) => {
+  const rootSpan = tracer.startSpan("DistributedTracingExample", { kind: 1 });
+  api.context.with(api.trace.setSpan(api.context.active(), rootSpan), () => {
+    const name = "Sample Name";
+    res.send(`Hello ${getName(name)}, Distributed Tracing!`);
+    rootSpan.end();
+  });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -247,11 +242,10 @@ app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
 
-
 // Expose /metrics endpoint
-if (typeof app !== 'undefined' && app.get) {
-  app.get('/metrics', async (req, res) => {
-    res.set('Content-Type', client.register.contentType);
+if (typeof app !== "undefined" && app.get) {
+  app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", client.register.contentType);
     res.end(await client.register.metrics());
   });
 }
