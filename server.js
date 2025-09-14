@@ -1,5 +1,5 @@
 const api = require("@opentelemetry/api");
-const tracer = require("dyro-instrumentation/tracing")("MyService");
+const tracer = require("./tracing")("MyService");
 const fs = require("fs");
 const https = require("https");
 
@@ -11,7 +11,7 @@ const LocalStrategy = require("passport-local").Strategy;
 const bcrypt = require("bcrypt");
 const User = require("./user");
 
-const prom = require("dyro-instrumentation/prometheus_metrics");
+const prom = require("./prometheus-metrics");
 
 const client = prom.client;
 
