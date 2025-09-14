@@ -1,5 +1,5 @@
 const api = require("@opentelemetry/api");
-const tracer = require("./tracing")("MyService");
+const tracer = require("dyro-instrumentation/tracing")("MyService");
 const fs = require("fs");
 const https = require("https");
 
@@ -11,9 +11,13 @@ const LocalStrategy = require("passport-local").Strategy;
 const bcrypt = require("bcrypt");
 const User = require("./user");
 
-const prom = require("./prometheus-metrics");
+const prom = require("dyro-instrumentation/prometheus_metrics");
 
 const client = prom.client;
+
+// Define status constants
+const SUCCESS = "success";
+const FAILED = "failed";
 
 const app = express();
 app.use(express.json());
@@ -30,7 +34,7 @@ if (typeof app !== "undefined" && app.use) {
 
 
 passport.use(new LocalStrategy(async (username, password, done) => {
-  const user = await prom.traceDbQuery('findOne', 'users', () => User.findOne({ username }));
+  const user = await User.findOne({ username });
   // success
   prom.dbQueryCounter.inc({
     operation:"Login",
@@ -44,12 +48,12 @@ passport.use(new LocalStrategy(async (username, password, done) => {
 }));
 passport.serializeUser((user, done) => done(null, user.id));
 passport.deserializeUser(async (id, done) => {
-  const user = await prom.traceDbQuery('findById', 'users', () => User.findById(id));
+  const user = User.findById(id);
   done(null, user);
 });
 
 mongoose.connect(
-"mongodb+srv://preetham:Preetham1750@pegabits.0b2jh8j.mongodb.net/myFirstDB?retryWrites=true&w=majority&appName=pegabits"
+  "mongodb+srv://db-user:hYderabadindIa_234@video-clip-project.lgpxgl2.mongodb.net/"
 );
 
 app.get("/", (req, res) => {
@@ -69,17 +73,59 @@ app.get("/", (req, res) => {
 
 // Registration
 app.post("/register", async (req, res) => {
+  startTime = Date.now();
   const { username, password } = req.body;
-  if (!username || !password)
+  if (!username || !password) {
+    prom.httpErrorRateCounter.inc({
+      method: req.method,
+      route: req.route ? req.route.path : req.path,
+      statusCode: 400
+    });
     return res.status(400).json({ error: "Missing fields" });
+  }
   const exists = await User.findOne({ username });
-  if (exists) return res.status(409).json({ error: "User exists" });
+  if (exists) {
+    prom.httpErrorRateCounter.inc({
+      method: req.method,
+      route: req.route ? req.route.path : req.path,
+      statusCode: 409
+    });
+    return res.status(409).json({ error: "User exists" });
+  }
   const hash = await bcrypt.hash(password, 10);
   const user = new User({ username, password: hash });
   await user.save();
+  endTime = Date.now();
+  const duration = (endTime - startTime) / 1000; // in seconds
+  prom.dbQueryHistogram.labels('save', 'users', SUCCESS).observe(duration);
   res.json({ message: "User registered" });
 });
 
+
+
+app.get("/slow-db-query-demo", (req, res) => {
+  // sample query
+  prom.dbQueryHistogram.labels("slow-demo-get", "users", SUCCESS).observe(2495);
+  res.json({ message: "Slow DB query demo recorded" });
+});
+
+app.get("/slow-db-query-demo-2", (req, res) => {
+  // sample query
+  prom.dbQueryHistogram.labels("slow-demo-get-2", "users", SUCCESS).observe(1495);
+  res.json({ message: "Slow DB query demo recorded" });
+});
+
+app.get("/slow-db-query-demo-11", (req, res) => {
+  // sample query
+  prom.dbQueryHistogram.labels("slow-demo-get-11", "users", SUCCESS).observe(3495);
+  res.json({ message: "Slow DB query demo recorded" });
+});
+
+app.get("/slow-db-query-demo-22", (req, res) => {
+  // sample query
+  prom.dbQueryHistogram.labels("slow-demo-get-22", "users", SUCCESS).observe(6795);
+  res.json({ message: "Slow DB query demo recorded" });
+});
 
 
 
@@ -143,7 +189,7 @@ app.post("/logout", (req, res) => {
 
 // List users
 app.get('/users', async (req, res) => {
-  const users = await prom.traceDbQuery('find', 'users', () => User.find({}, '-password'));
+  const users = await User.find({}, '-password');
   prom.dbQueryCounter.inc({
     operation: 'find',
     collection: 'users',
@@ -308,29 +354,29 @@ app.get('/slow-demo', async (req, res) => {
 });
 
 
-app.get('/total-slow-queries', async (req, res) => {
-  try {
-    // Sum dedicated slow counter
-    const slowCounterMetric = prom.dbSlowQueryCounter;
-    const slowSeries = slowCounterMetric.get().values || [];
-    const slowTotal = slowSeries.reduce((sum, s) => sum + (s.value || 0), 0);
+// app.get('/total-slow-queries', async (req, res) => {
+//   try {
+//     // Sum dedicated slow counter
+//     const slowCounterMetric = prom.dbSlowQueryCounter;
+//     const slowSeries = slowCounterMetric.get().values || [];
+//     const slowTotal = slowSeries.reduce((sum, s) => sum + (s.value || 0), 0);
 
-    // Also compute from general counter where status="slow" for comparison
-    const dbCounterMetric = prom.dbQueryCounter;
-    const dbSeries = dbCounterMetric.get().values || [];
-    const slowLabeledTotal = dbSeries
-      .filter(s => s.labels && s.labels.status === 'slow')
-      .reduce((sum, s) => sum + (s.value || 0), 0);
+//     // Also compute from general counter where status="slow" for comparison
+//     const dbCounterMetric = prom.dbQueryCounter;
+//     const dbSeries = dbCounterMetric.get().values || [];
+//     const slowLabeledTotal = dbSeries
+//       .filter(s => s.labels && s.labels.status === 'slow')
+//       .reduce((sum, s) => sum + (s.value || 0), 0);
 
-    res.json({
-      total_slow_queries: slowTotal,
-      total_slow_queries_from_status_label: slowLabeledTotal,
-      series_count: slowSeries.length
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch slow queries', details: err.message });
-  }
-});
+//     res.json({
+//       total_slow_queries: slowTotal,
+//       total_slow_queries_from_status_label: slowLabeledTotal,
+//       series_count: slowSeries.length
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: 'Failed to fetch slow queries', details: err.message });
+//   }
+// });
 
 
 
