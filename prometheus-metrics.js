@@ -9,12 +9,12 @@ const geoip = require("geoip-lite");
 const httpAvailabilityGauge = new client.Gauge({
   name: "http_availability",
   help: "Availability of HTTP service (1 = available, 0 = unavailable)",
-  labelNames: ["route", "device_type"],
+  labelNames: ["route"],
 });
 const httpErrorRateCounter = new client.Counter({
   name: "http_error_rate_total",
   help: "Total number of HTTP error responses (4xx and 5xx)",
-  labelNames: ["method", "route", "statusCode", "device_type"],
+  labelNames: ["method", "route", "statusCode"],
 });
 const httpRequestCounter = new client.Counter({
   name: "http_requests_total",
@@ -39,7 +39,7 @@ const httpThroughputCounter = new client.Counter(
   {
     "name": "http_throughput_total",
     "help": "Total number of HTTP requests",
-    "labelNames": ["method", "route", "statusCode", "device_type"]
+    "labelNames": ["method", "route", "statusCode"]
   }
 )
 client.register.registerMetric(httpThroughputCounter);
@@ -53,20 +53,23 @@ client.register.registerMetric(activeUsersGauge);
 
 
 // Counter for session creation
-const sessionCreatedTotal = new client.Counter({
-  name: 'sessions_created_total',
+const sessionTotal = new client.Counter({
+  name: 'sessions_total',
   help: 'Total number of sessions created',
-  labelNames: ['status'], // success or error
+  labelNames: ['user'], // user name
 });
-client.register.registerMetric(sessionCreatedTotal);
+client.register.registerMetric(sessionTotal);
 
-// Counter for session deletion
-const sessionDeletedTotal = new client.Counter({
-  name: 'sessions_deleted_total',
-  help: 'Total number of sessions deleted',
-  labelNames: ['status'], // success or error
+
+// Histogram for DB query durations
+const dbQueryHistogram = new client.Histogram({
+  name: "db_query_duration",
+  help: "Duration of database queries in seconds",
+  labelNames: ["operation", "collection", "status"],
 });
-client.register.registerMetric(sessionDeletedTotal);
+client.register.registerMetric(dbQueryHistogram);
+
+
 
 // Histogram for session duration
 const sessionDurationHistogram = new client.Histogram({
@@ -120,8 +123,7 @@ const metricsMiddleware = (req, res, next) => {
     httpThroughputCounter.inc({
       method: req.method,
       route: req.route ? req.route.path : req.path,
-      statusCode: res.statusCode,
-      device_type
+      statusCode: res.statusCode
     });
     // ✅ Corrected histogram usage
     httpResponseTimeHistogram
@@ -134,13 +136,16 @@ const metricsMiddleware = (req, res, next) => {
         method: req.method,
         route: req.route ? req.route.path : req.path,
         statusCode: res.statusCode,
-        device_type
       });
-      httpAvailabilityGauge.set({ route: req.route ? req.route.path : req.path, device_type }, 0);
+      httpAvailabilityGauge.set({ route: req.route ? req.route.path : req.path }, 0);
     } else {
-      httpAvailabilityGauge.set({ route: req.route ? req.route.path : req.path, device_type }, 1);
+      httpAvailabilityGauge.set({ route: req.route ? req.route.path : req.path }, 1);
     }
   });
+
+  const userName = req.headers["x-user-name"];
+
+  sessionTotal.inc({ user: userName });
 
   next();
 };
@@ -249,38 +254,6 @@ function updateThreadPoolUtilization() {
 setInterval(updateThreadPoolUtilization, 5000);
 
 
-// Wrapper function to trace DB queries
-async function traceDbQuery(operation, collection, queryFn) {
-  const start = process.hrtime();
-  let status = "success";
-  try {
-    const result = await queryFn();
-    return result;
-  } catch (err) {
-    status = "error";
-    throw err;
-  } finally {
-    const diff = process.hrtime(start);
-    const duration = diff[0] + diff[1] / 1e9;
-    if (duration > 1) {
-      dbQueryCounter.inc({ operation, collection, status: "slow" });
-      dbSlowQueryCounter.inc({ operation, collection });
-    } else {
-      dbQueryCounter.inc({ operation, collection, status });
-    }
-    dbQueryDurationHistogram.observe({ operation, collection, status: status === "slow" ? "slow" : status }, duration);
-  }
-}
-
-
-// Histogram for DB query durations
-const dbQueryDurationHistogram = new client.Histogram({
-  name: "db_query_duration_seconds",
-  help: "Duration of database queries in seconds",
-  labelNames: ["operation", "collection", "status"],
-});
-client.register.registerMetric(dbQueryDurationHistogram);
-
 
 module.exports = {
   httpAvailabilityGauge: httpAvailabilityGauge,
@@ -290,9 +263,7 @@ module.exports = {
   dbQueryCounter: dbQueryCounter,
   httpResponseTimeHistogram: httpResponseTimeHistogram,
   httpErrorRateCounter: httpErrorRateCounter,
-
-  dbQueryDurationHistogram: dbQueryDurationHistogram,
-  traceDbQuery: traceDbQuery,
+  dbQueryHistogram: dbQueryHistogram,
   dbPoolTargetGauge: dbPoolTargetGauge,
   dbPoolSizeGauge:dbPoolSizeGauge,
   dbPoolUtilizationGauge:dbPoolUtilizationGauge,
@@ -301,8 +272,7 @@ module.exports = {
   ErrorDbQueryCounter:ErrorDbQueryCounter,
   threadPoolUtilizationGauge:threadPoolUtilizationGauge,
   activeUsersGauge:activeUsersGauge,
-  sessionCreatedTotal:sessionCreatedTotal,
-  sessionDeletedTotal:sessionDeletedTotal,
+  sessionTotal:sessionTotal,
   sessionDurationHistogram:sessionDurationHistogram,
   dbSlowQueryCounter: dbSlowQueryCounter,
   userRegisteredCounter:userRegisteredCounter,
