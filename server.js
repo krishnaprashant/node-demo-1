@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const api = require("@opentelemetry/api");
 const tracer = require("./tracing")("MyService");
 const fs = require("fs");
@@ -22,7 +24,7 @@ const FAILED = "failed";
 const app = express();
 app.use(express.json());
 app.use(
-  session({ secret: "demo-secret", resave: false, saveUninitialized: false })
+  session({ secret: process.env.SESSION_SECRET || "demo-secret", resave: false, saveUninitialized: false })
 );
 app.use(passport.initialize());
 app.use(passport.session());
@@ -52,9 +54,7 @@ passport.deserializeUser(async (id, done) => {
   done(null, user);
 });
 
-mongoose.connect(
-  "mongodb+srv://db-user:hYderabadindIa_234@video-clip-project.lgpxgl2.mongodb.net/"
-);
+mongoose.connect(process.env.MONGODB_URI);
 
 app.get("/", (req, res) => {
   const currentSpan = api.trace.getActiveSpan();
