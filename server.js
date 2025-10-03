@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const api = require("@opentelemetry/api");
-const tracer = require("./tracing")("MyService");
+const tracer = require("./tracing")("demo-app");
 const fs = require("fs");
 const https = require("https");
 
